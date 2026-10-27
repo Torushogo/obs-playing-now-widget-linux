@@ -4,6 +4,10 @@ A small "now playing" card for OBS that shows the title, artist, album art and a
 you're playing in YouTube, YouTube Music or Spotify (and, with one line of config, other MPRIS players such as VLC or mpv). Long titles scroll sideways, and track changes swap in place
 instead of flickering.
 
+        <p align="center">
+          <img src="assets/widget_preview.png" alt="Widget Preview" width="600">
+        </p>
+        
 It has three parts:
 
 | Part | What it does |
