@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Now Playing -> local bridge
-// @description  Sends the real title / artist / artwork from YouTube and YouTube Music to the local MPRIS bridge
+// @description  Sends the real title / artist / artwork from YouTube, YouTube Music and SoundCloud to the local MPRIS bridge
 // @match        https://music.youtube.com/*
 // @match        https://www.youtube.com/*
+// @match        https://soundcloud.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @run-at       document-idle
@@ -35,6 +36,19 @@
     // Best-effort fallback if the page has not filled in MediaSession
     function fromDom() {
         const text = sel => (document.querySelector(sel) || {}).textContent;
+        if (location.hostname.endsWith('soundcloud.com')) {
+            // SoundCloud's playback bar. These class names are best-effort and may change.
+            const badge = document.querySelector('.playbackSoundBadge');
+            if (!badge) return null;
+            const link = badge.querySelector('.playbackSoundBadge__titleLink');
+            const hidden = link && link.querySelector('[aria-hidden="true"]');
+            const title = ((link && link.getAttribute('title')) || (hidden && hidden.textContent) || '').trim();
+            const artist = ((badge.querySelector('.playbackSoundBadge__lightLink') || {}).textContent || '').trim();
+            const cover = badge.querySelector('.playbackSoundBadge__avatar span');
+            const m = cover && /url\(["']?([^"')]+)/.exec(cover.style.backgroundImage || '');
+            const art = m ? m[1].replace(/-t\d+x\d+\./, '-t500x500.') : '';   // ask for the larger cover
+            return title ? { title, artist, album: '', art } : null;
+        }
         if (location.hostname === 'music.youtube.com') {
             const title = (text('ytmusic-player-bar .title') || '').trim();
             const byline = (text('ytmusic-player-bar .byline') || '').trim();
@@ -45,6 +59,19 @@
         const title = (text('h1.ytd-watch-metadata yt-formatted-string') || '').trim();
         const artist = (text('ytd-watch-metadata #owner ytd-channel-name a') || '').trim();
         return title ? { title, artist, album: '', art: '' } : null;
+    }
+
+    // Is something loaded, and is it playing? Uses the page's media element when there is one.
+    function mediaState() {
+        const el = document.querySelector('video') || document.querySelector('audio');
+        if (el && el.readyState > 0) {
+            return { playing: !el.paused && !el.ended, duration: isFinite(el.duration) ? el.duration : 0 };
+        }
+        // SoundCloud may keep its audio element out of the page, so read the play button instead
+        if (location.hostname.endsWith('soundcloud.com') && document.querySelector('.playbackSoundBadge')) {
+            return { playing: !!document.querySelector('.playControls__play.playing'), duration: 0 };
+        }
+        return null;
     }
 
     function collect() {
@@ -65,12 +92,12 @@
                 method: 'POST', url: BRIDGE, data: body,
                 headers: { 'Content-Type': 'application/json' },
                 onload: r => { if (r.status !== 204) console.warn('[now-playing] bridge replied', r.status); },
-                onerror: e => console.warn('[now-playing] could not reach bridge', e),
-                ontimeout: () => console.warn('[now-playing] bridge timed out')
+                              onerror: e => console.warn('[now-playing] could not reach bridge', e),
+                              ontimeout: () => console.warn('[now-playing] bridge timed out')
             });
         } else {
             fetch(BRIDGE, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body })
-                .catch(() => {});
+            .catch(() => {});
         }
     }
 
@@ -82,15 +109,15 @@
 
     function tick() {
         ticks++;
-        const video = document.querySelector('video');
-        if (!video || video.readyState === 0) return;          // nothing loaded in this tab yet
+        const state = mediaState();
+        if (!state) return;                                    // nothing loaded in this tab yet
         const d = collect();
         if (!d) {
-            if (ticks % 25 === 0) console.warn('[now-playing] video found but no title/artist metadata could be read');
+            if (ticks % 25 === 0) console.warn('[now-playing] player found but no title/artist metadata could be read');
             return;
         }
-        d.playing = !video.paused && !video.ended;
-        d.duration = isFinite(video.duration) ? video.duration : 0;
+        d.playing = state.playing;
+        d.duration = state.duration;
 
         // Send the moment anything changes (new track, art, length, play/pause), otherwise every 1.5 s as a heartbeat
         const sig = [d.title, d.artist, d.art, Math.round(d.duration), d.playing].join('|');
@@ -106,5 +133,5 @@
     setInterval(tick, 400);
     // react straight away when the player loads a new track (media events don't bubble, so listen in the capture phase)
     ['loadedmetadata', 'durationchange', 'playing', 'pause', 'emptied'].forEach(ev =>
-        document.addEventListener(ev, () => setTimeout(tick, 50), true));
+    document.addEventListener(ev, () => setTimeout(tick, 50), true));
 })();

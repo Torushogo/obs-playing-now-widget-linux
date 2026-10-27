@@ -6,6 +6,7 @@ mpris-bridge: serves what your browser is playing (via MPRIS / playerctl) as JSO
   /config        settings page (widget/config.html): look, when to show, which sites and apps
   /api/config    GET/POST the saved settings (~/.config/obs-now-playing/config.json)
   /api/players   players playerctl can see right now (used by the settings page)
+  /health        quick "is it alive, which version, is anything missing" check
   /now-playing   current sessions, used by widget/now-playing.html
   /debug         raw playerctl metadata + what the userscript has reported (for troubleshooting)
   POST /meta     receives title / artist / artwork from userscript/now-playing.user.js
@@ -16,6 +17,7 @@ import json
 import subprocess
 import os
 import re
+import shutil
 import sys
 import base64
 import threading
@@ -23,6 +25,8 @@ import time
 from urllib.parse import unquote, urlparse
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+
+APP_VERSION = "1.1.0"
 
 # ---------------------------------------------------------------- settings
 # These are the DEFAULTS. Anything saved on the /config page overrides them.
@@ -434,7 +438,7 @@ def get_playerctl_data():
 
     sessions.sort(key=lambda s: s["playback_status"] != "Playing")   # playing players first (stable)
     current = sessions[0]["source_app_id"] if sessions else ""
-    return {"app_version": "1.0.0", "current_session_id": current, "sessions": sessions}
+    return {"app_version": APP_VERSION, "current_session_id": current, "sessions": sessions}
 
 
 def get_debug():
@@ -477,6 +481,16 @@ def find_widget():
     return None
 
 
+def health():
+    """Cheap status check. Reports yes/no only, never file paths, because any web page can read this."""
+    w = find_widget()
+    return {"ok": True, "app_version": APP_VERSION,
+            "playerctl": shutil.which("playerctl") is not None,
+            "widget_page_found": w is not None,
+            "settings_page_found": bool(w and os.path.isfile(os.path.join(os.path.dirname(w), "config.html"))),
+            "settings_saved": os.path.isfile(CONFIG_PATH)}
+
+
 _cache = {"data": {"sessions": []}, "ts": 0.0}
 _lock = threading.Lock()
 
@@ -512,6 +526,9 @@ class MPRISBridgeHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         route = self.path.split('?', 1)[0]
+        if route == '/health':
+            self._json(health())
+            return
         if route in ('/api/config', '/api/players'):
             self._json(get_config() if route == '/api/config' else list_players())
             return

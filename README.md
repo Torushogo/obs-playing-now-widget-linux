@@ -8,12 +8,13 @@ instead of flickering.
   <img src="assets/widget_preview.png" alt="Widget Preview" width="600">
 </p>
 
+
 It has three parts:
 
 | Part | What it does |
 |------|--------------|
 | `bridge/mpris-bridge.py` | Reads what your browser and native music apps report over MPRIS (using `playerctl`) and serves it as JSON on `http://127.0.0.1:5000`. |
-| `userscript/now-playing.user.js` | Runs on YouTube / YouTube Music pages, reads the real title, artist and artwork, and sends them to the bridge. **Needed for YouTube in Chromium-based browsers such as Brave and Chrome**, which only report a tab title over MPRIS. Not needed for the Spotify app. |
+| `userscript/now-playing.user.js` | Runs on YouTube, YouTube Music and SoundCloud pages, reads the real title, artist and artwork, and sends them to the bridge. **Needed for those sites in Chromium-based browsers such as Brave and Chrome**, which only report a tab title over MPRIS. Not needed for the Spotify app. SoundCloud support reads the page's playback bar and is best-effort, so it may need a fix if SoundCloud changes its layout. |
 | `widget/now-playing.html` | The card itself. Add it to OBS as a browser source. |
 
 ```
@@ -36,8 +37,8 @@ Tested with Brave + YouTube Music on Linux. Spotify (desktop app and web player)
 ### 1. Get the files
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/obs-now-playing.git
-cd obs-now-playing
+git clone https://github.com/Torushogo/obs-playing-now-widget-linux.git
+cd obs-playing-now-widget-linux
 ```
 
 ### 2. Install playerctl
@@ -63,7 +64,7 @@ To have it start automatically as a user service:
 ```bash
 mkdir -p ~/.config/systemd/user
 cp systemd/mpris-bridge.service ~/.config/systemd/user/
-# edit the ExecStart path in that file if you cloned somewhere other than ~/obs-now-playing
+# edit the ExecStart path in that file if you cloned somewhere other than ~/obs-playing-now-widget-linux
 systemctl --user daemon-reload
 systemctl --user enable --now mpris-bridge.service
 ```
@@ -75,7 +76,7 @@ After changing the bridge file, apply it with `systemctl --user restart mpris-br
 1. Install Tampermonkey or Violentmonkey.
 2. **Allow user scripts.** Recent Chromium browsers ignore userscripts until you open `brave://extensions` (or `chrome://extensions`), click **Details** on your userscript manager, and turn on **Allow user scripts**. Reload the page after doing this.
 3. Open `userscript/now-playing.user.js` on GitHub, click **Raw**, and your manager will offer to install it. Or create a new script and paste the file's contents.
-4. Fully reload your YouTube / YouTube Music tab (Ctrl+Shift+R).
+4. Fully reload your YouTube / YouTube Music / SoundCloud tab (Ctrl+Shift+R).
 
 Firefox users may be able to skip this step (see the note at the top).
 
@@ -138,6 +139,7 @@ When more than one player is active, the one that is currently playing is shown.
   - check that **Allow user scripts** is on (step 4) and that the script is enabled,
   - do a full reload of the tab (Ctrl+Shift+R),
   - open the browser console on the tab and look for lines starting with `[now-playing]`.
+- **Check that the bridge is running, and which version:** `curl -s http://127.0.0.1:5000/health`. It reports the version and whether `playerctl`, the widget page, the settings page and a saved config were found. If the version is missing or the request returns a 404, an older copy of the bridge is answering on that port.
 - **See what the bridge sees:** `curl -s http://127.0.0.1:5000/debug`. When running as a service, `journalctl --user -u mpris-bridge.service -f` shows requests and art-related messages.
 - **Widget is the old design after an update:** refresh the OBS browser source's cache.
 

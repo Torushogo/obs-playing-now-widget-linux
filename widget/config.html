@@ -42,6 +42,7 @@ footer span{margin-right:auto;color:var(--mute)}
 <main>
 <section>
  <h1>Now Playing settings</h1>
+ <p class="hint" id="health"></p>
  <nav role="tablist"><button data-t="look" aria-selected="true">Look</button><button data-t="when" aria-selected="false">When to show</button><button data-t="src" aria-selected="false">Sources</button></nav>
 
  <div id="look">
@@ -153,6 +154,7 @@ async function players(){
    const c=r.children[2];c.checked=isB||cfg.sources.apps.some(a=>p.name.toLowerCase().includes(a));c.disabled=isB;
    c.onchange=()=>{const a=cfg.sources.apps.filter(x=>x!==p.id);if(c.checked)a.push(p.id);cfg.sources.apps=a;change();renderSrc()};
    box.append(r)})}catch(e){}}
+fetch('/health').then(r=>r.json()).then(h=>{$('#health').textContent=`Bridge ${h.app_version} is running.`+(h.playerctl?'':' playerctl was not found, so no players can be read. Install it first.')}).catch(()=>{});
 setInterval(players,2500);
 fetch('/api/config').then(r=>r.json()).then(c=>{cfg=c;saved=JSON.stringify(c);render();players()});
 </script></body></html>
