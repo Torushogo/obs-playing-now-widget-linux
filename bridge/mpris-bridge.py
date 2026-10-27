@@ -3,6 +3,9 @@
 mpris-bridge: serves what your browser is playing (via MPRIS / playerctl) as JSON on http://127.0.0.1:5000
 
   /              the widget page itself (widget/now-playing.html), so OBS can load it over plain HTTP
+  /config        settings page (widget/config.html): look, when to show, which sites and apps
+  /api/config    GET/POST the saved settings (~/.config/obs-now-playing/config.json)
+  /api/players   players playerctl can see right now (used by the settings page)
   /now-playing   current sessions, used by widget/now-playing.html
   /debug         raw playerctl metadata + what the userscript has reported (for troubleshooting)
   POST /meta     receives title / artist / artwork from userscript/now-playing.user.js
@@ -22,6 +25,7 @@ from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # ---------------------------------------------------------------- settings
+# These are the DEFAULTS. Anything saved on the /config page overrides them.
 # BROWSER players are only reported when the page URL is on one of these hosts. Add more sites here.
 ALLOWED_URL_HOSTS = ("youtube.com", "youtu.be", "open.spotify.com", "soundcloud.com")
 # Chromium-based browsers often send no xesam:url. True = keep those players, False = drop them.
@@ -30,11 +34,98 @@ ALLOW_UNKNOWN_URL = True
 BROWSER_NAMES = ("firefox", "chrome", "chromium", "brave", "edge", "vivaldi", "opera")
 # NATIVE apps are always reported, with no URL check. Same substring matching as above.
 # Add more here, e.g. "vlc", "mpv", "strawberry", "rhythmbox", "elisa", "amberol"
-NATIVE_PLAYERS = ("spotify", "vlc")
+NATIVE_PLAYERS = ("spotify", "vlc",)
 # Widget page served at http://127.0.0.1:5000/ . Leave empty to auto-find widget/now-playing.html
 # next to this script (works when running from the repo). If you copy the bridge somewhere else
 # (e.g. ~/.local/bin), set the full path to now-playing.html here, or via $NOW_PLAYING_WIDGET.
 WIDGET_FILE = os.environ.get("NOW_PLAYING_WIDGET", "")
+
+CONFIG_PATH = os.path.expanduser(os.environ.get("NOW_PLAYING_CONFIG", "~/.config/obs-now-playing/config.json"))
+DEFAULTS = {
+    "sources": {"hosts": list(ALLOWED_URL_HOSTS), "apps": list(NATIVE_PLAYERS),
+                "browsers": list(BROWSER_NAMES), "allow_unknown_url": ALLOW_UNKNOWN_URL},
+    "style": {"preset": "glass", "width": 460, "radius": 20, "bg": "#121214", "bg_opacity": 78,
+              "text": "#ffffff", "accent": "#ffffff", "backdrop": 55, "show_art": True,
+              "show_progress": True, "show_time": True, "font": "", "font_url": "",
+              "title_size": 21, "artist_size": 15},
+    "behavior": {"show_mode": "always", "show_seconds": 8},
+}
+_NAME, _HOST = r"[a-z0-9._-]{1,40}", r"[a-z0-9.-]{1,100}"
+SCHEMA = {
+    "sources": {"hosts": ("list", _HOST), "apps": ("list", _NAME), "browsers": ("list", _NAME), "allow_unknown_url": "bool"},
+    "style": {"preset": ("str", r"[a-z0-9-]{1,20}"), "width": ("int", 240, 900), "radius": ("int", 0, 60),
+              "bg": "color", "bg_opacity": ("int", 0, 100), "text": "color", "accent": "color",
+              "backdrop": ("int", 0, 100), "show_art": "bool", "show_progress": "bool", "show_time": "bool",
+              "font": ("str", r"[\w \-]{0,60}"), "font_url": "url", "title_size": ("int", 12, 48), "artist_size": ("int", 10, 36)},
+    "behavior": {"show_mode": ("str", r"always|on_change"), "show_seconds": ("int", 2, 60)},
+}
+
+
+def clean(spec, v, d):
+    """Validate one setting; anything unexpected falls back to the default d."""
+    k = spec if isinstance(spec, str) else spec[0]
+    if k == "bool":
+        return v if isinstance(v, bool) else d
+    if k == "color":
+        return v if isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v) else d
+    if k == "int":
+        try:
+            return int(min(spec[2], max(spec[1], float(v))))
+        except (TypeError, ValueError):
+            return d
+    if k == "str":
+        return v if isinstance(v, str) and re.fullmatch(spec[1], v) else d
+    if k == "url":   # http(s) only, no quotes / brackets / spaces so it can't break out of CSS or HTML
+        return v if isinstance(v, str) and (v == "" or re.fullmatch(r"https?://[^\s\"'()<>\\]{1,500}", v)) else d
+    if k == "list":
+        if not isinstance(v, list):
+            return d
+        out = []
+        for x in v:
+            x = str(x).strip().lower()
+            if re.fullmatch(spec[1], x) and x not in out:
+                out.append(x)
+        return out[:60]
+    return d
+
+
+def merged(raw, base):
+    raw = raw if isinstance(raw, dict) else {}
+    return {sec: {k: clean(spec, (raw.get(sec) or {}).get(k, base[sec][k]) if isinstance(raw.get(sec), dict) else base[sec][k], base[sec][k])
+                  for k, spec in fields.items()} for sec, fields in SCHEMA.items()}
+
+
+_cfg = {"mtime": "unset", "data": None}
+
+
+def get_config():
+    try:
+        m = os.stat(CONFIG_PATH).st_mtime
+    except OSError:
+        m = None
+    if _cfg["data"] is None or _cfg["mtime"] != m:
+        raw = {}
+        if m is not None:
+            try:
+                with open(CONFIG_PATH) as f:
+                    raw = json.load(f)
+            except Exception as e:
+                log(f"[config] cannot read {CONFIG_PATH}: {e!r}")
+        _cfg.update(mtime=m, data=merged(raw, DEFAULTS))
+        _cache["ts"] = 0.0
+    return _cfg["data"]
+
+
+def save_config(raw):
+    data = merged(raw, get_config())
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, CONFIG_PATH)
+    _cfg["data"] = None   # re-read on next access
+    return get_config()
+
 
 SEP = "~~SEP~~"
 FORMAT = SEP.join("{{%s}}" % k for k in (
@@ -49,9 +140,9 @@ def log(msg):
 # ---------------------------------------------------------------- helpers
 def is_allowed_url(url):
     if not url:
-        return ALLOW_UNKNOWN_URL
+        return get_config()["sources"]["allow_unknown_url"]
     host = (urlparse(url).hostname or "").lower()
-    return any(host == h or host.endswith("." + h) for h in ALLOWED_URL_HOSTS)
+    return any(host == h or host.endswith("." + h) for h in get_config()["sources"]["hosts"])
 
 
 def sniff_mime(data):
@@ -115,9 +206,6 @@ def process_art_url(raw_art, page_url, player):
         vid = youtube_id(page_url)
         if vid:
             art = f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"
-        else:
-            # fallback to a transparent 1x1 spacer pixel so the widget never crashes
-            art = "https://flaticon.com"
 
     if _art_logged.get(player) != raw_art:
         _art_logged[player] = raw_art
@@ -157,7 +245,7 @@ def parse_time_to_seconds(val_str):
 
 
 def is_native(player):
-    return any(n in player.lower() for n in NATIVE_PLAYERS)
+    return any(n in player.lower() for n in get_config()["sources"]["apps"])
 
 
 def active_players():
@@ -165,7 +253,20 @@ def active_players():
     if r.returncode != 0 or not r.stdout.strip():
         return []
     players = [p.strip() for p in r.stdout.strip().split("\n") if p.strip()]
-    return [p for p in players if is_native(p) or any(b in p.lower() for b in BROWSER_NAMES)]
+    browsers = get_config()["sources"]["browsers"]
+    return [p for p in players if is_native(p) or any(b in p.lower() for b in browsers)]
+
+
+def list_players():
+    """Every player playerctl can see, with whether it is currently shown (for the settings page)."""
+    r = subprocess.run(["playerctl", "-l"], capture_output=True, text=True, timeout=0.8)
+    out = []
+    for p in [x.strip() for x in r.stdout.splitlines() if x.strip()] if r.returncode == 0 else []:
+        browser = any(b in p.lower() for b in get_config()["sources"]["browsers"])
+        t = subprocess.run(["playerctl", "-p", p, "metadata", "xesam:title"], capture_output=True, text=True, timeout=0.8)
+        out.append({"name": p, "id": re.sub(r"\.instance\d+$", "", p.lower()), "kind": "browser" if browser else "app",
+                    "title": t.stdout.strip()[:80]})
+    return out
 
 
 # ---------------------------------------------------------------- page metadata
@@ -246,6 +347,7 @@ def get_playerctl_data():
             parts = meta_res.stdout.strip("\n").split(SEP)
             parts += [""] * (8 - len(parts))
             title, artist, url, raw_art, length_str, status, album_artist, album = [p.strip() for p in parts[:8]]
+
             title = clean_title(title)
             artist = artist or album_artist
             native = is_native(player)
@@ -395,18 +497,32 @@ class MPRISBridgeHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')
 
+    def _json(self, data, code=200):
+        body = json.dumps(data).encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_OPTIONS(self):
         self.send_response(204)
         self._cors()
         self.end_headers()
 
     def do_GET(self):
-        if self.path.split('?', 1)[0] in ('/', '/widget'):
+        route = self.path.split('?', 1)[0]
+        if route in ('/api/config', '/api/players'):
+            self._json(get_config() if route == '/api/config' else list_players())
+            return
+        if route in ('/', '/widget', '/config'):
             wp = find_widget()
-            if not wp:
+            if wp and route == '/config':
+                wp = os.path.join(os.path.dirname(wp), "config.html")
+            if not wp or not os.path.isfile(wp):
                 self.send_response(404)
                 self.end_headers()
-                self.wfile.write(b"now-playing.html not found next to the bridge")
+                self.wfile.write(b"page not found next to the bridge (now-playing.html / config.html)")
                 return
             with open(wp, "rb") as f:
                 body = f.read()
@@ -434,6 +550,20 @@ class MPRISBridgeHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path.split('?', 1)[0] == '/api/config':
+            # only the settings page itself may change settings, not other websites in your browser
+            if self.headers.get('Origin') not in (None, 'http://127.0.0.1:5000', 'http://localhost:5000'):
+                self.send_response(403)
+                self.end_headers()
+                return
+            try:
+                n = min(int(self.headers.get('Content-Length', 0)), 65536)
+                self._json(save_config(json.loads(self.rfile.read(n) or b"{}")))
+            except Exception as e:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(str(e).encode()[:200])
+            return
         if not self.path.startswith('/meta'):
             self.send_response(404)
             self.end_headers()

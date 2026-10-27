@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <title>Now Playing</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: var(--font, "Inter", system-ui, -apple-system, "Segoe UI", sans-serif); }
         body { background: transparent; overflow: hidden; }
 
         .widget-card {
@@ -12,11 +12,11 @@
             display: flex;
             flex-direction: column;
             gap: 14px;
-            width: 460px;
+            width: var(--w, 460px);
             padding: 16px;
-            border-radius: 20px;
-            color: #fff;
-            background: rgba(18, 18, 20, 0.78);
+            border-radius: var(--radius, 20px);
+            color: var(--text, #fff);
+            background: var(--bg, rgba(18, 18, 20, 0.78));
             border: 1px solid rgba(255, 255, 255, 0.08);
             box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
             overflow: hidden;
@@ -36,13 +36,13 @@
             background-size: cover;
             background-position: center;
             filter: blur(38px) saturate(1.5);
-            opacity: 0.55;
+            opacity: var(--backdrop, 0.55);
             transform: scale(1.2);
             transition: opacity 0.3s ease;
         }
         .scrim {
             position: absolute; inset: 0; z-index: -1;
-            background: linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.45));
+            background: linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.45)); opacity: var(--scrim, 1);
         }
 
         .main-content { display: flex; align-items: center; gap: 16px; }
@@ -70,12 +70,12 @@
         }
         .title, .artist { overflow: hidden; white-space: nowrap; }
         .title {
-            font-size: 21px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em;
+            font-size: var(--title-size, 21px); font-weight: 700; line-height: 1.2; letter-spacing: -0.01em;
             text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
         }
         .artist {
-            font-size: 15px; font-weight: 500; line-height: 1.25;
-            color: rgba(255, 255, 255, 0.72);
+            font-size: var(--artist-size, 15px); font-weight: 500; line-height: 1.25;
+            color: color-mix(in srgb, var(--text, #fff) 72%, transparent);
         }
         .artist:empty { display: none; }
 
@@ -96,19 +96,21 @@
         .progress-footer { display: flex; flex-direction: column; gap: 7px; }
         .progress-container {
             width: 100%; height: 5px; border-radius: 3px;
-            background: rgba(255, 255, 255, 0.16);
+            background: color-mix(in srgb, var(--text, #fff) 16%, transparent);
             overflow: hidden;
         }
         .progress-bar {
             width: 0%; height: 100%; border-radius: 3px;
-            background: #fff;
-            box-shadow: 0 0 10px rgba(255, 255, 255, 0.45);
+            background: var(--accent, #fff);
+            box-shadow: 0 0 10px color-mix(in srgb, var(--accent, #fff) 45%, transparent);
         }
         .time-display {
             display: flex; justify-content: space-between;
             font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
-            color: rgba(255, 255, 255, 0.6);
+            color: color-mix(in srgb, var(--text, #fff) 60%, transparent);
         }
+        .widget-card.no-art .art-container, .widget-card.no-progress .progress-container, .widget-card.no-time .time-display { display: none; }
+        .widget-card.no-progress.no-time .progress-footer { display: none; }
 
         /* in-place track swap: content fades out, text + art change together, then it fades back in */
         .main-content, .progress-footer { transition: opacity 0.26s ease, transform 0.26s ease; }
@@ -172,6 +174,66 @@
         let latest = null;                  // newest session from the bridge
 
         const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        // ---- settings saved on the /config page (the bridge serves them) ----
+        const PREVIEW = new URLSearchParams(location.search).has('preview');   // used by the settings page
+        const DEMO_ART = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 9 9"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ff7a59"/><stop offset="1" stop-color="#5b4bff"/></linearGradient></defs><rect width="9" height="9" fill="url(#g)"/></svg>');
+        const DEMO = { playback_status: 'Playing', position: 74, duration: 214,
+                       media_properties: { Title: 'Midnight Drive', Artist: 'The Neon Hours', art_url: DEMO_ART } };
+        let cfg = null, cfgSig = '', revealUntil = 0, fontKey = '';
+
+        function applyConfig(c) {
+            cfg = c;
+            const s = c.style, r = document.documentElement.style;
+            const rgb = h => [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16)).join(',');
+            r.setProperty('--w', s.width + 'px');
+            r.setProperty('--radius', s.radius + 'px');
+            r.setProperty('--bg', `rgba(${rgb(s.bg)},${s.bg_opacity / 100})`);
+            r.setProperty('--text', s.text);
+            r.setProperty('--accent', s.accent);
+            r.setProperty('--backdrop', s.backdrop / 100);
+            r.setProperty('--scrim', s.backdrop > 0 ? 1 : 0);
+            r.setProperty('--title-size', s.title_size + 'px');
+            r.setProperty('--artist-size', s.artist_size + 'px');
+            card.classList.toggle('no-art', !s.show_art);
+            card.classList.toggle('no-progress', !s.show_progress);
+            card.classList.toggle('no-time', !s.show_time);
+            loadFont(s.font, s.font_url);
+        }
+
+        function loadFont(family, url) {
+            const key = family + '|' + url;
+            if (key === fontKey) return;
+            fontKey = key;
+            const root = document.documentElement.style;
+            const use = () => family ? root.setProperty('--font', `"${family}", "Inter", system-ui, sans-serif`) : root.removeProperty('--font');
+            const old = document.getElementById('userFont');
+            if (old) old.remove();
+            if (family && url) {
+                if (/\.(woff2?|ttf|otf)(\?.*)?$/i.test(url)) {     // direct font file
+                    new FontFace(family, `url("${url}")`).load().then(f => { document.fonts.add(f); use(); }).catch(use);
+                    return;
+                }
+                const l = document.createElement('link');            // stylesheet link, e.g. Google Fonts
+                l.id = 'userFont'; l.rel = 'stylesheet'; l.href = url;
+                document.head.appendChild(l);
+            }
+            use();
+        }
+
+        async function loadConfig() {
+            try {
+                const t = await (await fetch(BRIDGE + '/api/config')).text();
+                if (t !== cfgSig) { cfgSig = t; applyConfig(JSON.parse(t)); }
+            } catch (e) { /* bridge not reachable yet: keep defaults */ }
+        }
+
+        // Card shows while a track is loaded, or (show only on track change) for a few seconds after each change
+        function wantVisible() {
+            if (PREVIEW) return true;
+            if (!shown.key) return false;
+            return !cfg || cfg.behavior.show_mode !== 'on_change' || performance.now() < revealUntil;
+        }
 
         function formatTime(seconds) {
             if (isNaN(seconds) || seconds < 0) return "0:00";
@@ -289,7 +351,6 @@
                         if (ok && shown.key === key) { setArt(artUrl); shown.art = artUrl; }
                     });
                 }
-                card.classList.add('visible');
                 return;
             }
 
@@ -311,7 +372,7 @@
                 pendingKey = ""; pendingArt = "";
                 syncTiming(latest || session, true);
                 card.classList.remove('swapping');
-                card.classList.add('visible');
+                revealUntil = performance.now() + (cfg ? cfg.behavior.show_seconds : 8) * 1000;
             });
         }
 
@@ -336,7 +397,7 @@
 
                 const sessions = (data && data.sessions)
                     ? data.sessions.filter(s => s && s.media_properties && isAllowedSession(s)) : [];
-                const session = sessions.find(s => s.playback_status === "Playing") || sessions[0];
+                const session = sessions.find(s => s.playback_status === "Playing") || sessions[0] || (PREVIEW ? DEMO : undefined);
 
                 if (session) {
                     const media = session.media_properties;
@@ -357,6 +418,7 @@
         }
 
         function tick(currentTime) {
+            card.classList.toggle('visible', wantVisible());
             let t = lastSyncPosition;
             if (isPlaying) t = Math.min(lastSyncPosition + (currentTime - lastSyncTimestamp) / 1000, currentDuration);
             const percent = currentDuration > 0 ? (t / currentDuration) * 100 : 0;
@@ -366,6 +428,11 @@
             requestAnimationFrame(tick);
         }
 
+        window.addEventListener('message', e => {
+            if (e.origin === location.origin && e.data && e.data.type === 'preview') applyConfig(e.data.config);
+        });
+        loadConfig();
+        if (!PREVIEW) setInterval(loadConfig, 3000);
         requestAnimationFrame(tick);
         setInterval(updateNowPlaying, POLL_MS);
         updateNowPlaying();

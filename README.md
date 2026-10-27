@@ -7,7 +7,7 @@ instead of flickering.
 <p align="center">
   <img src="assets/widget_preview.png" alt="Widget Preview" width="600">
 </p>
-        
+
 It has three parts:
 
 | Part | What it does |
@@ -36,7 +36,7 @@ Tested with Brave + YouTube Music on Linux. Spotify (desktop app and web player)
 ### 1. Get the files
 
 ```bash
-git clone https://github.com/Torushogo/obs-now-playing.git
+git clone https://github.com/YOUR-USERNAME/obs-now-playing.git
 cd obs-now-playing
 ```
 
@@ -81,17 +81,38 @@ Firefox users may be able to skip this step (see the note at the top).
 
 ### 5. Add the widget to OBS
 
+The bridge also serves the widget page itself, so the most reliable way is to load it over HTTP:
+
 1. In OBS, add a **Browser** source.
-2. Tick **Local file** and choose `widget/now-playing.html`.
+2. Leave **Local file** unticked and set the URL to `http://127.0.0.1:5000/`.
 3. Set the width to about `500` and the height to about `220` (the card is 460 px wide; the extra room is for its shadow).
 4. Click OK, then play something. If the card doesn't appear, refresh the source (**Properties → Refresh cache of current page**).
 
-## Settings
+The bridge has to be running first, and the card stays hidden until something is playing.
+
+Alternative: tick **Local file** and choose `widget/now-playing.html` instead. This works on some setups, but the URL above avoids local-file quirks in OBS's browser.
+
+## Settings page
+
+Open `http://127.0.0.1:5000/config` in any browser while the bridge is running. It has a live preview and three tabs:
+
+- **Look:** presets (Glass, Solid, Neon, Light, Compact, Minimal), colors, opacity, corner radius, width, album glow, text sizes, and toggles for album art, progress bar and times. You can set a **font** by name plus a **font URL**: either a Google Fonts link (`https://fonts.googleapis.com/css2?family=...`) or a direct `.woff2`, `.ttf` or `.otf` file.
+- **When to show:** show the card the whole time something plays, or only for a few seconds each time the track changes.
+- **Sources:** which websites and which desktop apps are shown. The "Playing right now" list shows every player `playerctl` can see, with a switch to enable it, so VLC, mpv, Strawberry and similar players are one click away. Only Spotify is on by default, so a video player can't end up on stream by accident.
+
+Click **Save changes**. OBS picks the new settings up within a few seconds, with no refresh. Settings are stored in `~/.config/obs-now-playing/config.json` (change the location with `$NOW_PLAYING_CONFIG`). Only the settings page can change them, because the bridge rejects changes sent from other websites.
+
+`config.html` has to sit in the same folder as `now-playing.html`.
+
+## Bridge constants
+
+The constants below are only the defaults. Anything saved on the settings page overrides them.
 
 **Bridge** (`bridge/mpris-bridge.py`, near the top):
 
 - `NATIVE_PLAYERS` lists desktop apps that are always shown, with no URL check. It is `("spotify",)` by default. Names are matched against `playerctl -l`, so you can add `"vlc"`, `"mpv"`, `"strawberry"`, `"rhythmbox"` and so on.
 - `BROWSER_NAMES` lists which MPRIS players are treated as browsers.
+- `WIDGET_FILE` is the widget page served at `http://127.0.0.1:5000/`. Leave it empty when you run the bridge from the repo, because it then finds `widget/now-playing.html` by itself. If you copy the bridge somewhere else (for example `~/.local/bin/`), set this to the full path of `now-playing.html`, or set the `NOW_PLAYING_WIDGET` environment variable.
 - `ALLOWED_URL_HOSTS` is the list of sites that are shown for browser players. It is YouTube, YouTube Music, Spotify web and SoundCloud by default.
 - `ALLOW_UNKNOWN_URL`:
   - `True` (default) also shows browser sessions that report no page URL. This means audio from any site may appear if the browser doesn't report its URL.
@@ -109,6 +130,8 @@ When more than one player is active, the one that is currently playing is shown.
 ## Troubleshooting
 
 - **Nothing shows, and the bridge works:** open `http://127.0.0.1:5000/now-playing` in a browser while a track plays. An empty `sessions` list means the bridge isn't seeing your browser. Run `playerctl -l` to check.
+- **`http://127.0.0.1:5000/` says "now-playing.html not found next to the bridge":** the bridge can't find the widget. Set `WIDGET_FILE` (see Settings) to the full path of `now-playing.html`.
+- **`http://127.0.0.1:5000/` gives a plain 404 with no text:** an old copy of the bridge is still running. Check what holds the port with `ss -ltnp | grep 5000`, stop it, and start the current one. Only run one copy at a time, because two will fight over the port.
 - **Spotify doesn't show:** run `playerctl -l` while a song plays. If `spotify` isn't listed, the app isn't exposing MPRIS (check that it's running and not sandboxed from the session bus). If it is listed, make sure it matches an entry in `NATIVE_PLAYERS`, then restart the bridge.
 - **"Advertisement" shows up:** that is what Spotify's free tier reports during ads.
 - **Wrong title ("YouTube Music"), no artist or art:** the userscript isn't reporting. Open `http://127.0.0.1:5000/debug` and look at the last entry, `page_meta`. If it is empty:

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Now Playing settings</title>
+<style>
+:root{--bg:#171a21;--panel:#1f232c;--line:#2f3441;--ink:#e9eaf0;--mute:#9096a8;--accent:#8aa4ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "IBM Plex Sans","Segoe UI",system-ui,sans-serif}
+main{display:grid;grid-template-columns:minmax(340px,480px) 1fr;gap:28px;max-width:1180px;margin:0 auto;padding:24px 24px 96px}
+h1{font-size:20px;font-weight:600;margin:0 0 14px}
+h2{font-size:14px;font-weight:600;margin:22px 0 6px}
+nav{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:12px}
+nav button{background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;color:var(--mute);padding:9px 12px;font:inherit;cursor:pointer}
+nav button[aria-selected=true]{color:var(--ink);border-color:var(--accent)}
+.row{display:grid;grid-template-columns:130px 1fr 40px;gap:10px;align-items:center;padding:6px 0}
+.row .wide{grid-column:2/4}
+input[type=range]{width:100%;accent-color:var(--accent)}
+input[type=color]{width:44px;height:28px;border:1px solid var(--line);background:none;padding:0;border-radius:6px}
+input[type=text],select{width:100%;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font:inherit}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+output,.mute,.hint{color:var(--mute)}
+.hint{margin:4px 0 0;font-size:13px}
+.presets{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.pre{background:var(--b);color:var(--t);border:2px solid var(--line);border-bottom:5px solid var(--a);border-radius:8px;padding:12px 6px;font:inherit;cursor:pointer}
+.pre[aria-pressed=true]{border-color:var(--accent);border-bottom-color:var(--a)}
+.chip{display:inline-flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 11px;margin:0 6px 6px 0}
+.chip button,.sug{background:none;border:0;color:var(--mute);cursor:pointer;font:inherit}
+.sug{border:1px dashed var(--line);border-radius:999px;padding:2px 10px;margin:0 6px 6px 0}
+.add{display:flex;gap:8px;margin:4px 0 8px}
+.btn{background:var(--accent);color:#10131a;border:0;border-radius:6px;padding:8px 16px;font:inherit;font-weight:600;cursor:pointer}
+.btn.alt{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+.btn:disabled{opacity:.4;cursor:default}
+aside{position:sticky;top:24px;align-self:start}
+.stage{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:
+ conic-gradient(#2a2e39 25%,#222631 0 50%,#2a2e39 0 75%,#222631 0) 0 0/20px 20px}
+iframe{display:block;width:100%;height:260px;border:0;background:transparent}
+footer{position:fixed;inset:auto 0 0;background:var(--panel);border-top:1px solid var(--line);padding:12px 24px;display:flex;gap:12px;align-items:center;justify-content:flex-end}
+footer span{margin-right:auto;color:var(--mute)}
+[hidden]{display:none!important}
+@media(max-width:820px){main{grid-template-columns:1fr}aside{position:static;order:-1}}
+</style></head>
+<body>
+<main>
+<section>
+ <h1>Now Playing settings</h1>
+ <nav role="tablist"><button data-t="look" aria-selected="true">Look</button><button data-t="when" aria-selected="false">When to show</button><button data-t="src" aria-selected="false">Sources</button></nav>
+
+ <div id="look">
+  <div class="presets" id="presets"></div>
+  <h2>Colors and shape</h2><div id="f1"></div>
+  <h2>Show</h2><div id="f2"></div>
+  <h2>Font</h2><div id="f3"></div>
+  <p class="hint">Use a Google Fonts link (the one with <code>css2?family=</code>) or a direct .woff2, .ttf or .otf file. The font name must match.</p>
+ </div>
+
+ <div id="when" hidden>
+  <label class="row"><span>Show the card</span><select class="wide" id="mode"><option value="always">Whenever something plays</option><option value="on_change">Only when the track changes</option></select></label>
+  <div id="f4"></div>
+  <p class="hint">The preview always shows the card. This timing applies on stream.</p>
+ </div>
+
+ <div id="src" hidden>
+  <h2>Websites</h2><div id="hosts"></div>
+  <p class="hint">Only browser tabs on these sites are shown. Subdomains match too.</p>
+  <h2>Apps</h2><div id="apps"></div>
+  <p class="hint">Desktop players are matched by the name <code>playerctl -l</code> lists. mpv needs the mpv-mpris plugin.</p>
+  <label class="row"><span class="wide" style="grid-column:1/3">Also show browser audio that reports no address</span><input type="checkbox" id="unk"></label>
+  <h2>Playing right now</h2><div id="players" class="mute">Looking for players...</div>
+ </div>
+</section>
+<aside><div class="stage"><iframe id="frame" src="/?preview=1" title="Widget preview"></iframe></div>
+ <p class="hint">Live preview. Edits show here before you save.</p></aside>
+</main>
+<footer><span id="status"></span><button class="btn alt" id="revert">Discard changes</button><button class="btn" id="save" disabled>Save changes</button></footer>
+
+<script>
+const $=s=>document.querySelector(s);
+const PRESETS={
+ glass:{bg:'#121214',bg_opacity:78,text:'#ffffff',accent:'#ffffff',radius:20,width:460,backdrop:55,title_size:21,artist_size:15,show_art:true,show_progress:true,show_time:true},
+ solid:{bg:'#1c1f27',bg_opacity:100,text:'#f2f3f7',accent:'#8aa4ff',radius:12,width:460,backdrop:0,title_size:21,artist_size:15,show_art:true,show_progress:true,show_time:true},
+ neon:{bg:'#0d0221',bg_opacity:90,text:'#f5e9ff',accent:'#ff2bd6',radius:16,width:460,backdrop:35,title_size:21,artist_size:15,show_art:true,show_progress:true,show_time:true},
+ light:{bg:'#ffffff',bg_opacity:92,text:'#1b1d24',accent:'#1b1d24',radius:22,width:460,backdrop:0,title_size:21,artist_size:15,show_art:true,show_progress:true,show_time:true},
+ compact:{bg:'#121214',bg_opacity:80,text:'#ffffff',accent:'#ffffff',radius:40,width:340,backdrop:30,title_size:17,artist_size:13,show_art:true,show_progress:true,show_time:false},
+ minimal:{bg:'#000000',bg_opacity:0,text:'#ffffff',accent:'#ffffff',radius:0,width:420,backdrop:0,title_size:24,artist_size:16,show_art:false,show_progress:false,show_time:false}
+};
+const SITES=['youtube.com','open.spotify.com','soundcloud.com','bandcamp.com','music.apple.com','tidal.com','deezer.com','twitch.tv'];
+const APPS=['spotify','vlc','mpv','strawberry','rhythmbox','elisa','amberol','lollypop','clementine','audacious','cmus','mpd'];
+const normHost=x=>{try{return new URL(x.includes('://')?x:'https://'+x).hostname.replace(/^www\./,'').toLowerCase()}catch(e){return ''}};
+const normApp=x=>x.trim().toLowerCase().replace(/\.instance\d+$/,'').replace(/[^a-z0-9._-]/g,'');
+const get=p=>p.split('.').reduce((o,k)=>o[k],cfg);
+const set=(p,v)=>{const k=p.split('.'),l=k.pop();k.reduce((o,x)=>o[x],cfg)[l]=v};
+let cfg,saved='';
+
+function row([p,l,t,a,b,ph]){
+ const v=get(p),el=document.createElement('label');el.className='row';
+ el.innerHTML=`<span>${l}</span>`+(t==='range'?`<input type="range" min="${a}" max="${b}"><output></output>`:t==='color'?'<input type="color">':t==='bool'?'<input type="checkbox">':`<input type="text" class="wide" placeholder="${a||''}">`);
+ const i=el.querySelector('input'),o=el.querySelector('output');
+ if(t==='bool')i.checked=v;else i.value=v;if(o)o.textContent=v;
+ i.oninput=()=>{const nv=t==='bool'?i.checked:t==='range'?+i.value:i.value;set(p,nv);if(o)o.textContent=nv;if(p.startsWith('style.')&&!/font/.test(p))cfg.style.preset='custom';change()};
+ return el}
+function fill(id,rows){const h=$(id);h.replaceChildren(...rows.map(row))}
+
+function listEditor(id,path,sugg,norm,ph){
+ const h=$(id),list=get(path);h.replaceChildren();
+ list.forEach(x=>{const c=document.createElement('span');c.className='chip';c.append(x);const b=document.createElement('button');b.textContent='×';b.title='Remove '+x;b.onclick=()=>{set(path,list.filter(y=>y!==x));change();renderSrc()};c.append(b);h.append(c)});
+ const f=document.createElement('div');f.className='add';
+ f.innerHTML=`<input type="text" placeholder="${ph}"><button class="btn alt">Add</button>`;
+ const add=v=>{v=norm(v);if(v&&!list.includes(v)){set(path,[...list,v]);change();renderSrc()}};
+ f.querySelector('input').onkeydown=e=>{if(e.key==='Enter')add(e.target.value)};
+ f.querySelector('button').onclick=()=>add(f.querySelector('input').value);
+ h.append(f);
+ sugg.filter(s=>!list.includes(s)).forEach(s=>{const b=document.createElement('button');b.className='sug';b.textContent='+ '+s;b.onclick=()=>add(s);h.append(b)})}
+
+function renderSrc(){
+ listEditor('#hosts','sources.hosts',SITES,normHost,'soundcloud.com');
+ listEditor('#apps','sources.apps',APPS,normApp,'vlc');
+ $('#unk').checked=cfg.sources.allow_unknown_url}
+
+function render(){
+ $('#presets').replaceChildren(...Object.keys(PRESETS).map(k=>{const p=PRESETS[k],b=document.createElement('button');
+  b.className='pre';b.textContent=k[0].toUpperCase()+k.slice(1);b.style.cssText=`--b:${p.bg};--t:${p.text};--a:${p.accent}`;
+  b.setAttribute('aria-pressed',cfg.style.preset===k);
+  b.onclick=()=>{Object.assign(cfg.style,PRESETS[k],{preset:k});render();change()};return b}));
+ fill('#f1',[['style.bg','Background','color'],['style.bg_opacity','Opacity','range',0,100],['style.text','Text','color'],['style.accent','Bar color','color'],['style.radius','Corner radius','range',0,60],['style.width','Width','range',240,900],['style.backdrop','Album glow','range',0,100],['style.title_size','Title size','range',12,48],['style.artist_size','Artist size','range',10,36]]);
+ fill('#f2',[['style.show_art','Album art','bool'],['style.show_progress','Progress bar','bool'],['style.show_time','Times','bool']]);
+ fill('#f3',[['style.font','Font name','text','e.g. Poppins'],['style.font_url','Font URL','text','https://fonts.googleapis.com/css2?family=...']]);
+ fill('#f4',[['behavior.show_seconds','Visible for (s)','range',2,60]]);
+ $('#mode').value=cfg.behavior.show_mode;$('#f4').hidden=cfg.behavior.show_mode!=='on_change';
+ renderSrc()}
+
+function change(){
+ $('#save').disabled=JSON.stringify(cfg)===saved;$('#status').textContent=$('#save').disabled?'':'Unsaved changes';
+ $('#frame').contentWindow.postMessage({type:'preview',config:cfg},location.origin)}
+
+$('#mode').onchange=e=>{cfg.behavior.show_mode=e.target.value;$('#f4').hidden=e.target.value!=='on_change';change()};
+$('#unk').onchange=e=>{cfg.sources.allow_unknown_url=e.target.checked;change()};
+$('#frame').onload=()=>change();
+$('#revert').onclick=()=>{cfg=JSON.parse(saved);render();change()};
+$('#save').onclick=async()=>{
+ const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+ if(r.ok){cfg=await r.json();saved=JSON.stringify(cfg);render();change();$('#status').textContent='Saved. OBS picks it up within a few seconds.'}
+ else $('#status').textContent='Could not save: '+await r.text()};
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('nav button').forEach(x=>x.setAttribute('aria-selected',x===b));
+ ['look','when','src'].forEach(t=>$('#'+t).hidden=t!==b.dataset.t)});
+
+async function players(){
+ if($('#src').hidden||!cfg)return;
+ try{const l=await(await fetch('/api/players')).json(),box=$('#players');box.replaceChildren();
+  if(!l.length){box.textContent='Nothing is playing or paused. Start a player and it will appear here.';return}
+  l.forEach(p=>{const r=document.createElement('label'),isB=p.kind==='browser';r.className='row';
+   r.innerHTML='<span></span><span class="mute"></span><input type="checkbox">';
+   r.children[0].textContent=p.name;r.children[1].textContent=isB?'Follows the website list':p.title;
+   const c=r.children[2];c.checked=isB||cfg.sources.apps.some(a=>p.name.toLowerCase().includes(a));c.disabled=isB;
+   c.onchange=()=>{const a=cfg.sources.apps.filter(x=>x!==p.id);if(c.checked)a.push(p.id);cfg.sources.apps=a;change();renderSrc()};
+   box.append(r)})}catch(e){}}
+setInterval(players,2500);
+fetch('/api/config').then(r=>r.json()).then(c=>{cfg=c;saved=JSON.stringify(c);render();players()});
+</script></body></html>
