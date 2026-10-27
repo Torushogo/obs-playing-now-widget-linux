@@ -3,7 +3,7 @@ Description=MPRIS now-playing bridge for OBS widget
 
 [Service]
 # Adjust the path if you cloned the repo somewhere else
-ExecStart=/usr/bin/python3 %h/obs-now-playing/bridge/mpris-bridge.py
+ExecStart=/usr/bin/python3 %h/obs-playing-now-widget-linux/bridge/mpris-bridge.py
 Restart=on-failure
 RestartSec=2
 
