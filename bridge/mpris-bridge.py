@@ -30,7 +30,7 @@ ALLOW_UNKNOWN_URL = True
 BROWSER_NAMES = ("firefox", "chrome", "chromium", "brave", "edge", "vivaldi", "opera")
 # NATIVE apps are always reported, with no URL check. Same substring matching as above.
 # Add more here, e.g. "vlc", "mpv", "strawberry", "rhythmbox", "elisa", "amberol"
-NATIVE_PLAYERS = ("spotify",)
+NATIVE_PLAYERS = ("spotify", "vlc")
 # Widget page served at http://127.0.0.1:5000/ . Leave empty to auto-find widget/now-playing.html
 # next to this script (works when running from the repo). If you copy the bridge somewhere else
 # (e.g. ~/.local/bin), set the full path to now-playing.html here, or via $NOW_PLAYING_WIDGET.
@@ -115,6 +115,9 @@ def process_art_url(raw_art, page_url, player):
         vid = youtube_id(page_url)
         if vid:
             art = f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"
+        else:
+            # fallback to a transparent 1x1 spacer pixel so the widget never crashes
+            art = "https://flaticon.com"
 
     if _art_logged.get(player) != raw_art:
         _art_logged[player] = raw_art
@@ -243,7 +246,6 @@ def get_playerctl_data():
             parts = meta_res.stdout.strip("\n").split(SEP)
             parts += [""] * (8 - len(parts))
             title, artist, url, raw_art, length_str, status, album_artist, album = [p.strip() for p in parts[:8]]
-
             title = clean_title(title)
             artist = artist or album_artist
             native = is_native(player)
