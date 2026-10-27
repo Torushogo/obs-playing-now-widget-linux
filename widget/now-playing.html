@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Now Playing</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; }
+        body { background: transparent; overflow: hidden; }
+
+        .widget-card {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            width: 460px;
+            padding: 16px;
+            border-radius: 20px;
+            color: #fff;
+            background: rgba(18, 18, 20, 0.78);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+            overflow: hidden;
+            isolation: isolate;
+            opacity: 0;
+            transform: translateY(14px) scale(0.98);
+            transition: opacity 0.55s cubic-bezier(0.16, 1, 0.3, 1), transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .widget-card.visible { opacity: 1; transform: none; }
+
+        /* blurred copy of the album art behind the content */
+        .backdrop {
+            position: absolute;
+            inset: -40px;
+            z-index: -1;
+            background-image: var(--art, none);
+            background-size: cover;
+            background-position: center;
+            filter: blur(38px) saturate(1.5);
+            opacity: 0.55;
+            transform: scale(1.2);
+            transition: opacity 0.3s ease;
+        }
+        .scrim {
+            position: absolute; inset: 0; z-index: -1;
+            background: linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.45));
+        }
+
+        .main-content { display: flex; align-items: center; gap: 16px; }
+
+        .art-container {
+            position: relative;
+            width: 92px; height: 92px; flex-shrink: 0;
+            border-radius: 14px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+            display: grid; place-items: center;
+        }
+        .art-container img {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            display: none;
+        }
+        .art-container svg { width: 34px; height: 34px; opacity: 0.45; }
+
+        .track-info {
+            min-width: 0; flex: 1;
+            display: flex; flex-direction: column; justify-content: center; gap: 5px;
+        }
+        .title, .artist { overflow: hidden; white-space: nowrap; }
+        .title {
+            font-size: 21px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em;
+            text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+        }
+        .artist {
+            font-size: 15px; font-weight: 500; line-height: 1.25;
+            color: rgba(255, 255, 255, 0.72);
+        }
+        .artist:empty { display: none; }
+
+        /* text that is too long scrolls sideways, pausing at each end; short text stays put */
+        .inner { display: inline-block; will-change: transform; }
+        .marquee.scrolling {
+            -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+        }
+        .marquee.scrolling .inner {
+            animation: marquee var(--dur, 8s) ease-in-out infinite alternate;
+        }
+        @keyframes marquee {
+            0%, 14%   { transform: translateX(0); }
+            86%, 100% { transform: translateX(calc(var(--dist, 0px) * -1)); }
+        }
+
+        .progress-footer { display: flex; flex-direction: column; gap: 7px; }
+        .progress-container {
+            width: 100%; height: 5px; border-radius: 3px;
+            background: rgba(255, 255, 255, 0.16);
+            overflow: hidden;
+        }
+        .progress-bar {
+            width: 0%; height: 100%; border-radius: 3px;
+            background: #fff;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.45);
+        }
+        .time-display {
+            display: flex; justify-content: space-between;
+            font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        /* in-place track swap: content fades out, text + art change together, then it fades back in */
+        .main-content, .progress-footer { transition: opacity 0.26s ease, transform 0.26s ease; }
+        .widget-card.swapping .main-content,
+        .widget-card.swapping .progress-footer { opacity: 0; transform: translateY(-6px); }
+        .widget-card.swapping .backdrop { opacity: 0; }
+    </style>
+</head>
+<body>
+
+    <div id="card" class="widget-card">
+        <div class="backdrop" id="backdrop"></div>
+        <div class="scrim"></div>
+
+        <div class="main-content">
+            <div class="art-container">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+                <img id="art" alt="Album Art" referrerpolicy="no-referrer">
+            </div>
+            <div class="track-info">
+                <div id="title" class="title marquee"><span class="inner">Track Title</span></div>
+                <div id="artist" class="artist marquee"><span class="inner"></span></div>
+            </div>
+        </div>
+
+        <div class="progress-footer">
+            <div class="progress-container"><div id="progressBar" class="progress-bar"></div></div>
+            <div class="time-display">
+                <span id="currentTime">0:00</span>
+                <span id="totalTime">0:00</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const BRIDGE = 'http://127.0.0.1:5000';
+        const DEBUG = true;            // logs each track change in the console
+        const POLL_MS = 400;           // how often to ask the bridge
+        const HIDE_AFTER_MS = 3500;    // keep the old card this long if the bridge reports nothing
+        const ART_WAIT_MS = 1500;      // max time to wait for new artwork before showing the track without it
+        const SWAP_OUT_MS = 220;       // fade-out time before the text/art change
+
+        // Optional second check on the url the bridge sends. Leave empty to trust the bridge's own filtering
+        // (needed for native apps like the Spotify app / VLC, which have no web url).
+        const ALLOWED_HOSTS = [];
+
+        const $ = id => document.getElementById(id);
+        const card = $('card'), titleEl = $('title'), artistEl = $('artist');
+        const artEl = $('art'), backdropEl = $('backdrop');
+
+        let currentDuration = 200;
+        let lastSyncTimestamp = performance.now();
+        let lastSyncPosition = 0;
+        let lastServerPos = null;
+        let isPlaying = false;
+
+        let shown = { key: "", art: "" };   // what the card is displaying right now
+        let pendingKey = "", pendingArt = "";
+        let swapToken = 0;
+        let missingSince = 0;
+        let latest = null;                  // newest session from the bridge
+
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        function formatTime(seconds) {
+            if (isNaN(seconds) || seconds < 0) return "0:00";
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+        }
+
+        // Set text and, if it overflows its box, scroll it sideways. Only re-measures when the text changes.
+        function setText(el, text) {
+            const inner = el.firstElementChild;
+            if (inner.textContent === text && el.dataset.measured) return;
+            inner.textContent = text;
+            el.dataset.measured = "1";
+            el.classList.remove('scrolling');
+            requestAnimationFrame(() => {
+                const dist = inner.scrollWidth - el.clientWidth;
+                if (dist > 2) {
+                    el.style.setProperty('--dist', dist + 'px');
+                    el.style.setProperty('--dur', Math.max(5, dist / 28 + 3) + 's');
+                    el.classList.add('scrolling');
+                }
+            });
+        }
+
+        function isAllowedSession(session) {
+            const url = session.url || "";
+            if (!url || !ALLOWED_HOSTS.length) return true;
+            try {
+                const host = new URL(url).hostname.toLowerCase();
+                return ALLOWED_HOSTS.some(h => host === h || host.endsWith('.' + h));
+            } catch (e) { return false; }
+        }
+
+        function youTubeThumb(session) {
+            const m = (session.url || "").match(/[?&]v=([\w-]{11})|youtu\.be\/([\w-]{11})/i);
+            const id = m && (m[1] || m[2]);
+            return id ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : "";
+        }
+
+        function resolveArtUrl(session, media) {
+            const raw = media.art_url || media.artUrl || media.thumbnail || "";
+            if (typeof raw === 'string' && raw) {
+                if (raw.startsWith('data:') || /^https?:\/\//i.test(raw)) return raw;
+                if (raw.startsWith('//')) return 'https:' + raw;
+            }
+            const b64 = media.Thumbnail || "";
+            if (/^[A-Za-z0-9+/=\r\n]{200,}$/.test(b64)) return 'data:image/jpeg;base64,' + b64.replace(/\s/g, '');
+            return youTubeThumb(session);
+        }
+
+        // Load an image off-screen so it can be swapped in instantly (no stale or half-loaded art)
+        function preload(url, ms) {
+            if (!url) return Promise.resolve(false);
+            return new Promise(resolve => {
+                const img = new Image();
+                img.referrerPolicy = 'no-referrer';
+                const timer = setTimeout(() => resolve(false), ms);
+                img.onload = () => { clearTimeout(timer); resolve(true); };
+                img.onerror = () => { clearTimeout(timer); resolve(false); };
+                img.src = url;
+            });
+        }
+
+        function setArt(url) {
+            if (!url) {
+                artEl.style.display = 'none';
+                artEl.removeAttribute('src');
+                backdropEl.style.setProperty('--art', 'none');
+                return;
+            }
+            artEl.src = url;
+            artEl.style.display = 'block';
+            backdropEl.style.setProperty('--art', `url("${url}")`);
+        }
+
+        // Playback clock. reset=true on a new track.
+        function syncTiming(session, reset) {
+            const now = performance.now();
+            if (reset) {
+                lastSyncPosition = 0;
+                lastSyncTimestamp = now;
+                lastServerPos = (session.position !== undefined) ? session.position : null;
+                currentDuration = (session.duration > 10) ? session.duration : 200;
+                isPlaying = (session.playback_status === "Playing");
+                return;
+            }
+            if (session.duration !== undefined && session.duration > 10) currentDuration = session.duration;
+
+            let expectedPos = isPlaying ? lastSyncPosition + (now - lastSyncTimestamp) / 1000 : lastSyncPosition;
+            if (expectedPos > currentDuration) expectedPos = currentDuration;
+
+            if (session.position !== undefined && session.position >= 0) {
+                const serverPos = session.position;
+                const fresh = (lastServerPos === null) || Math.abs(serverPos - lastServerPos) > 0.001;
+                lastServerPos = serverPos;
+                if (fresh && Math.abs(serverPos - expectedPos) > 1.0) expectedPos = serverPos;
+            }
+            lastSyncPosition = expectedPos;
+            lastSyncTimestamp = now;
+            isPlaying = (session.playback_status === "Playing");
+        }
+
+        function handleTrack(session, title, artist, artUrl) {
+            const key = title + '\u0001' + artist;
+
+            // Same track: just keep the clock in sync, and pick up artwork that arrives late.
+            if (key === shown.key) {
+                syncTiming(session, false);
+                if (artUrl && artUrl !== shown.art && artUrl !== pendingArt) {
+                    pendingArt = artUrl;
+                    preload(artUrl, ART_WAIT_MS).then(ok => {
+                        if (pendingArt !== artUrl) return;
+                        pendingArt = "";
+                        if (ok && shown.key === key) { setArt(artUrl); shown.art = artUrl; }
+                    });
+                }
+                card.classList.add('visible');
+                return;
+            }
+
+            if (key === pendingKey) return;   // a swap to this track is already underway
+            pendingKey = key;
+            const token = ++swapToken;
+            const wasVisible = card.classList.contains('visible') && shown.key !== "";
+            if (DEBUG) console.log("Track change:", title, "|", artist);
+
+            if (wasVisible) card.classList.add('swapping');
+
+            // Wait for the fade-out and for the new art, then change text and art together
+            Promise.all([preload(artUrl, ART_WAIT_MS), sleep(wasVisible ? SWAP_OUT_MS : 0)]).then(([artOk]) => {
+                if (token !== swapToken) return;            // a newer track took over
+                setText(titleEl, title);
+                setText(artistEl, artist);
+                setArt(artOk ? artUrl : "");
+                shown = { key, art: artOk ? artUrl : "" };
+                pendingKey = ""; pendingArt = "";
+                syncTiming(latest || session, true);
+                card.classList.remove('swapping');
+                card.classList.add('visible');
+            });
+        }
+
+        // Nothing reported: keep the current card for a few seconds (track changes briefly look like this)
+        function handleMissing() {
+            const now = performance.now();
+            if (!missingSince) missingSince = now;
+            if (now - missingSince > HIDE_AFTER_MS && (shown.key || pendingKey)) {
+                swapToken++;
+                pendingKey = ""; pendingArt = "";
+                shown = { key: "", art: "" };
+                isPlaying = false;
+                card.classList.remove('visible', 'swapping');
+            }
+        }
+
+        async function updateNowPlaying() {
+            try {
+                const response = await fetch(BRIDGE + '/now-playing');
+                if (!response.ok) throw new Error('HTTP error! status: ' + response.status);
+                const data = await response.json();
+
+                const sessions = (data && data.sessions)
+                    ? data.sessions.filter(s => s && s.media_properties && isAllowedSession(s)) : [];
+                const session = sessions.find(s => s.playback_status === "Playing") || sessions[0];
+
+                if (session) {
+                    const media = session.media_properties;
+                    const title = media.Title || media.title || "";
+                    const artist = media.Artist || media.artist || media.AlbumArtist || "";
+                    if (title || artist) {
+                        missingSince = 0;
+                        latest = session;
+                        handleTrack(session, title, artist, resolveArtUrl(session, media));
+                        return;
+                    }
+                }
+                handleMissing();
+            } catch (err) {
+                console.error("Widget fetch error:", err);
+                handleMissing();
+            }
+        }
+
+        function tick(currentTime) {
+            let t = lastSyncPosition;
+            if (isPlaying) t = Math.min(lastSyncPosition + (currentTime - lastSyncTimestamp) / 1000, currentDuration);
+            const percent = currentDuration > 0 ? (t / currentDuration) * 100 : 0;
+            $('progressBar').style.width = Math.min(percent, 100) + '%';
+            $('currentTime').textContent = formatTime(t);
+            $('totalTime').textContent = formatTime(currentDuration);
+            requestAnimationFrame(tick);
+        }
+
+        requestAnimationFrame(tick);
+        setInterval(updateNowPlaying, POLL_MS);
+        updateNowPlaying();
+    </script>
+</body>
+</html>

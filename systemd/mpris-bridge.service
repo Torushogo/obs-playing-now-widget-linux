@@ -1,0 +1,11 @@
+[Unit]
+Description=MPRIS now-playing bridge for OBS widget
+
+[Service]
+# Adjust the path if you cloned the repo somewhere else
+ExecStart=/usr/bin/python3 %h/obs-now-playing/bridge/mpris-bridge.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
